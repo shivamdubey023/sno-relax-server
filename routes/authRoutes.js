@@ -59,4 +59,28 @@ router.post("/create-user", async (req, res) => {
   }
 });
 
+// POST /api/auth/login
+router.post("/login", async (req, res) => {
+  try {
+    const { email, phone } = req.body;
+
+    // Both fields required
+    if (!email || !phone) {
+      return res.status(400).json({ error: "Email and phone are required" });
+    }
+
+    // Find existing user by email and phone
+    const user = await User.findOne({ email, phone });
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found. Please register first." });
+    }
+
+    res.json({ user, token: "logged-in" });
+  } catch (err) {
+    console.error("Error in login:", err);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 module.exports = router;

@@ -1,20 +1,9 @@
 const express = require("express");
 const router = express.Router();
-// Robust fetch loader: support CommonJS (node-fetch) and dynamic import for ESM builds
-let fetch;
-try {
-  const nf = require('node-fetch');
-  fetch = nf && nf.default ? nf.default : nf;
-} catch (e) {
-  // Fallback to dynamic import (works in newer node)
-  fetch = (...args) => import('node-fetch').then(m => m.default(...args));
-}
 const ChatHistory = require("../models/ChatHistory");
 const TrainingEntry = require('../models/TrainingEntry');
 const User = require("../models/User");
 
-const HF_API_KEY = process.env.HF_API_KEY;
-const { spawnSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const TRAINING_FILE = path.join(__dirname, '..', 'training_data.json');
@@ -60,94 +49,41 @@ function triggerTrainingUpdate(trainingData) {
 }
 
 // ✅ FIX: Python Chatbot with proper error checking
-function tryPythonChatbot(message) {
-  // Try models/chatbot.py first (enhanced), then root chatbot.py (basic)
-  const scripts = [
-    path.join(__dirname, '..', 'models', 'chatbot.py'),  // enhanced model
-    path.join(__dirname, '..', 'chatbot.py')              // fallback basic
-  ];
-
-  try {
-    for (const script of scripts) {
-      // Check if script exists first
-      if (!fs.existsSync(script)) {
-        console.warn(`⚠️ Script not found: ${script}`);
-        continue;
-      }
-
-      for (const cmd of ['python3', 'python']) {  // Try python3 first
-        try {
-          const res = spawnSync(cmd, [script], {
-            input: message,
-            encoding: 'utf8',
-            timeout: 3000,
-            stdio: ['pipe', 'pipe', 'pipe']  // Explicitly handle stdin/stdout/stderr
-          });
-
-          // Check for actual errors
-          if (res.error) {
-            console.warn(`⚠️ ${cmd} error for ${script}:`, res.error.message);
-            continue;
-          }
-
-          // Check status and stdout
-          if (res.status === 0 && res.stdout && res.stdout.trim()) {
-            console.log(`✅ Bot reply from: ${script} (${cmd})`);
-            return res.stdout.trim();
-          } else if (res.status !== 0) {
-            console.warn(`⚠️ ${script} exited with code ${res.status}`);
-            if (res.stderr) console.warn(`stderr: ${res.stderr}`);
-            continue;
-          }
-        } catch (e) {
-          console.warn(`⚠️ Exception trying ${cmd} on ${script}:`, e.message);
-          continue;
-        }
-      }
-    }
-  } catch (err) {
-    console.warn('Python chatbot error:', err.message);
-  }
-  
-  console.warn('⚠️ No Python response, falling back to Cohere/HuggingFace');
-  return null;
-}
-
-// ---------------- Cohere API - Enhanced with SnoBot personality ----------------
+// ---------------- Cohere API - Primary Chatbot ----------------
 const COHERE_API_KEY = process.env.COHERE_API_KEY;
-async function callCohereGenerate(prompt) {
+async function callCohereGenerate(message, userId, sessionId) {
   if (!COHERE_API_KEY) throw new Error('Cohere API key not configured');
 
-  const url = 'https://api.cohere.ai/v1/generate';
-  
-  // Add SnoBot personality to prompt
-  const enhancedPrompt = `You are SnoBot, a compassionate mental health support assistant. You are helpful, empathetic, non-judgmental, and supportive.
-Your role is to:
-- Listen attentively and show genuine understanding
-- Provide emotional support and helpful suggestions
-- Suggest wellness activities and coping strategies
-- Encourage healthy habits and self-care
-- Be warm, friendly, and use casual language with emojis occasionally
-- Keep responses concise (2-3 sentences) and conversational
-- Recommend professional help when needed
+  const { CohereClient } = require('cohere-ai');
+  const co = new CohereClient({
+    token: COHERE_API_KEY,
+  });
 
-User: ${prompt}
-SnoBot:`;
+  const systemPrompt = `You are SnoRelax, a compassionate AI assistant focused on mental health, stress relief, and promoting healthy lifestyles. Your responses should:
 
-  // Create AbortController for timeout
-  const controller = new AbortController();
-  const fetchTimeoutId = setTimeout(() => controller.abort(), 7000); // 7s internal timeout (1s less than external)
+1. Show empathy and understanding for users' feelings
+2. Provide practical, evidence-based suggestions for stress management
+3. Encourage healthy habits like exercise, meditation, and good sleep
+4. Promote seeking professional help when appropriate
+5. Keep responses supportive, positive, and medically appropriate
+6. Focus on wellness, mindfulness, and emotional well-being
+7. Avoid giving medical diagnoses or prescribing treatments
 
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${COHERE_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'xlarge',
-        prompt: enhancedPrompt,
+Always respond as a caring health companion who guides users toward better mental and physical wellness.`;
+
+  const response = await co.chat({
+    message: `${systemPrompt}\n\nUser: ${message}\n\nAssistant:`,
+    model: 'command-r-08-2024',
+    max_tokens: 300,
+    temperature: 0.7,
+    k: 0,
+    p: 0.75,
+    frequency_penalty: 0,
+    presence_penalty: 0
+  });
+
+  return response.text.trim();
+}
         max_tokens: 100,
         temperature: 0.8,
         frequency_penalty: 0.5,
@@ -347,57 +283,26 @@ router.post("/", async (req, res) => {
     if (prompt.length) prompt += "\n";
     prompt += `User: ${translatedText}\nBot:`;
 
-    // -------- Bot Logic (Priority: Cohere with timeout -> Python -> HuggingFace) ----------
+    // -------- Bot Logic (Cohere AI Only) ----------
     let botReply = "";
-    let source = "none";
+    let source = "cohere";
 
-    // 1. Try Cohere FIRST, but don't block indefinitely — use a short timeout and fallback
+    // Try Cohere AI
     if (COHERE_API_KEY) {
       try {
-        console.log("📡 Attempting Cohere (SnoBot) with timeout...");
-        const coherePromise = callCohereGenerate(translatedText);
-        const timeoutMs = preferCohere ? 12000 : 8000; // longer timeout when we prefer Cohere
-        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Cohere timeout')), timeoutMs));
-        try {
-          botReply = await Promise.race([coherePromise, timeoutPromise]);
-          source = 'cohere';
-          console.log(`✅ Got Cohere response: ${String(botReply).substring(0,50)}...`);
-        } catch (err) {
-          console.warn('Cohere primary attempt failed or timed out:', err.message);
-          botReply = '';
-        }
+        console.log("📡 Calling Cohere AI...");
+        botReply = await callCohereGenerate(translatedText, userId, `session_${Date.now()}`);
+        console.log(`✅ Got Cohere response: ${String(botReply).substring(0,50)}...`);
       } catch (err) {
         console.error('Cohere error:', err.message);
-        botReply = '';
+        botReply = "I'm sorry, I'm having trouble responding right now. Please try again in a moment.";
+        source = "error";
       }
+    } else {
+      console.error('No Cohere API key configured');
+      botReply = "Service temporarily unavailable. Please try again later.";
+      source = "error";
     }
-
-    // 2. Try Python bot if Cohere did not produce a timely reply
-    if (!botReply) {
-      try {
-        const pyReply = tryPythonChatbot(translatedText);
-        if (pyReply) {
-          botReply = pyReply;
-          source = "python";
-          console.log(`✅ Using Python bot response`);
-        }
-      } catch (e) {
-        console.error("Python bot error:", e);
-      }
-    }
-
-    // 3. HuggingFace fallback
-    if (!botReply && HF_API_KEY) {
-      try {
-        console.log("🤗 Trying HuggingFace API...");
-        const hfRes = await fetch("https://api-inference.huggingface.co/models/facebook/blenderbot-3B", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${HF_API_KEY}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({ inputs: translatedText })
-        });
 
         const hfData = await hfRes.json();
         botReply = hfData.generated_text || "[No reply from Hugging Face]";
