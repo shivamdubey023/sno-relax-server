@@ -17,6 +17,27 @@ const Setting = require("../models/Setting");
 const UserProfileChange = require("../models/UserProfileChange");
 const adminAuth = require('../middleware/adminAuth');
 
+// Admin login route
+router.post('/login', (req, res) => {
+  try {
+    const { adminId, password } = req.body;
+    
+    // Simple hardcoded admin credentials (for now)
+    if (adminId === "admin" && password === "pass") {
+      res.json({ 
+        token: "admin-token-" + Date.now(),
+        adminId: adminId,
+        message: "Login successful"
+      });
+    } else {
+      res.status(401).json({ error: "Invalid admin credentials" });
+    }
+  } catch (err) {
+    console.error("Admin login error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // Simple helpers for community groups stored in a JSON file
 const COMMUNITY_FILE = path.join(__dirname, "..", "data", "communities.json");
 function readCommunity() {
