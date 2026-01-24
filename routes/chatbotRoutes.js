@@ -84,35 +84,6 @@ Always respond as a caring health companion who guides users toward better menta
 
   return response.text.trim();
 }
-        max_tokens: 100,
-        temperature: 0.8,
-        frequency_penalty: 0.5,
-        presence_penalty: 0.1,
-        stop_sequences: ['\nUser:', '\n--', 'User says:'],
-      }),
-      signal: controller.signal,
-    });
-
-    clearTimeout(fetchTimeoutId);
-
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Cohere generate failed: ${res.status} ${text}`);
-    }
-
-    const data = await res.json();
-    let response = data?.generations?.[0]?.text?.trim() || "";
-    
-    // Clean up response
-    response = response.replace(/^SnoBot:\s*/, '').trim();
-    response = response.split('\n')[0].trim(); // Take first line only
-    
-    return response || "I'm here to listen. How are you feeling today? 🌱";
-  } catch (err) {
-    clearTimeout(fetchTimeoutId);
-    throw err;
-  }
-}
 
 // ---------------- Mood Analysis + Habit Suggestions (Cohere) ----------------
 async function callCohereAnalyzeMood(userText) {
