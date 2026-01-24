@@ -107,6 +107,20 @@ try {
   console.error('Failed to load communitySocket:', e);
 }
 
+try {
+  // Temporarily disabled due to filesystem corruption
+  // require('./sockets/chatbotSocket')(io);
+  console.log('Chatbot socket temporarily disabled due to filesystem issues');
+} catch (e) {
+  console.error('Failed to load chatbotSocket:', e);
+}
+
+try {
+  require('./sockets/adminSocket')(io);
+} catch (e) {
+  console.error('Failed to load adminSocket:', e);
+}
+
 // -------------------- Start Server --------------------
 const DEFAULT_PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 5000;
 
