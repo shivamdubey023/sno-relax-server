@@ -32,6 +32,7 @@ const app = express();
 const allowedOrigins = [
   'https://sno-relax-client.vercel.app',
   'https://sno-relax-admin.vercel.app',
+  'https://sno-relax-server.onrender.com',
   'http://localhost:3000',
   'http://localhost:3001',
   'http://127.0.0.1:3001',
