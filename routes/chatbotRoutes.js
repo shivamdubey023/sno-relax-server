@@ -275,18 +275,7 @@ router.post("/", async (req, res) => {
       source = "error";
     }
 
-        const hfData = await hfRes.json();
-        botReply = hfData.generated_text || "[No reply from Hugging Face]";
-        source = "huggingface";
-        console.log(`✅ Got HuggingFace response`);
-
-      } catch (err) {
-        console.error("HuggingFace error:", err.message);
-        botReply = "";
-      }
-    }
-
-    // 4. Default friendly response
+    // Default friendly response
     if (!botReply) {
       botReply = "I'm here to listen and support you. 🌱 What's on your mind?";
       source = "default";
