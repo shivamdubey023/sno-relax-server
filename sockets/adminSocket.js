@@ -153,7 +153,7 @@ module.exports = (io) => {
         recentActivity: recentChats.map(chat => ({
           id: chat._id,
           userId: chat.userId,
-          message: chat.message.substring(0, 50) + (chat.message.length > 50 ? '...' : ''),
+          message: chat.message && typeof chat.message === 'string' ? chat.message.substring(0, 50) + (chat.message.length > 50 ? '...' : '') : 'No message',
           timestamp: chat.timestamp
         })),
         timestamp: new Date()

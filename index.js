@@ -37,6 +37,10 @@ const allowedOrigins = [
   'http://localhost:3001',
   'http://127.0.0.1:3001',
   'http://127.0.0.1:3000',
+  // Add more potential client URLs
+  'https://sno-relax-client.onrender.com',
+  'https://sno-relax-client.netlify.app',
+  'https://sno-relax-client.github.io',
 ];
 
 app.use(
