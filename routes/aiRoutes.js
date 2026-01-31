@@ -146,7 +146,7 @@ router.post('/guide', async (req, res) => {
 
       const compact = {
         history: history.map(h => ({ userMessage: h.userMessage, botReply: h.botReply, timestamp: h.timestamp })),
-        moods: moods.map(m => ({ mood: m.mood, note: m.notes || m.note || '', date: m.date })),"}]}]}
+        moods: moods.map(m => ({ mood: m.mood, note: m.notes || m.note || '', date: m.date })),
         profile: { firstName: profile.firstName ? 'REDACTED' : undefined, history: profile.history }
       };
 
