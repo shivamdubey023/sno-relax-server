@@ -115,9 +115,8 @@ try {
 }
 
 try {
-  // Temporarily disabled due to filesystem corruption
-  // require('./sockets/chatbotSocket')(io);
-  console.log('Chatbot socket temporarily disabled due to filesystem issues');
+  require('./sockets/chatbotSocket')(io);
+  console.log('Chatbot socket loaded');
 } catch (e) {
   console.error('Failed to load chatbotSocket:', e);
 }
