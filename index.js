@@ -78,6 +78,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/community/legacy', communityRoutes);
 app.use('/api/community', communityMongoRoutes);
 app.use('/api/moods', moodRoutes);
+// Alias for clients that call singular form: /api/mood/:userId
+app.use('/api/mood', moodRoutes);
 app.use('/api/chat/history', chatHistoryRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/private', privateRoutes);

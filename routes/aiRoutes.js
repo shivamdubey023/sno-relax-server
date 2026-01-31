@@ -98,7 +98,7 @@ router.post('/guide', async (req, res) => {
     const history = await ChatHistory.find({ userId }).sort({ timestamp: 1 }).limit(200);
     // Fetch recent moods
     let moods = [];
-    try { moods = await Mood.find({ userId }).sort({ createdAt: -1 }).limit(7); } catch (e) {}
+    try { moods = await Mood.find({ userId }).sort({ date: -1 }).limit(7); } catch (e) {}
     // User profile
     let profile = {};
     try { profile = (await User.findOne({ $or: [{ userId }, { _id: userId }] })) || {}; } catch (e) {}
@@ -106,7 +106,7 @@ router.post('/guide', async (req, res) => {
     // Prepare compact prompt
     const compact = {
       history: history.slice(-20).map(h => ({ userMessage: h.userMessage, botReply: h.botReply })),
-      moods: moods.map(m => ({ mood: m.mood, note: m.notes, date: m.createdAt })),
+      moods: moods.map(m => ({ mood: m.mood, note: m.notes || m.note || '', date: m.date })),
       profile: { firstName: profile.firstName, history: profile.history }
     };
 
@@ -140,13 +140,13 @@ router.post('/guide', async (req, res) => {
       const since = new Date(Date.now() - (Number(days) || 7) * 24 * 60 * 60 * 1000);
       const history = await ChatHistory.find({ userId, timestamp: { $gte: since } }).sort({ timestamp: 1 }).limit(1000);
       let moods = [];
-      try { moods = await Mood.find({ userId, createdAt: { $gte: since } }).sort({ createdAt: 1 }).limit(100); } catch (e) {}
+      try { moods = await Mood.find({ userId, date: { $gte: since } }).sort({ date: 1 }).limit(100); } catch (e) {}
       let profile = {};
       try { profile = (await User.findOne({ $or: [{ userId }, { _id: userId }] })) || {}; } catch (e) {}
 
       const compact = {
         history: history.map(h => ({ userMessage: h.userMessage, botReply: h.botReply, timestamp: h.timestamp })),
-        moods: moods.map(m => ({ mood: m.mood, note: m.notes, date: m.createdAt })),
+        moods: moods.map(m => ({ mood: m.mood, note: m.notes || m.note || '', date: m.date })),"}]}]}
         profile: { firstName: profile.firstName ? 'REDACTED' : undefined, history: profile.history }
       };
 
@@ -191,7 +191,7 @@ router.post('/guide', async (req, res) => {
           doc.fontSize(12).text('Mood Log (last entries):', { underline: true });
           (moods || []).slice(-20).forEach(m => {
             doc.moveDown(0.1);
-            doc.fontSize(10).text(`${new Date(m.createdAt).toLocaleString()} • ${m.mood} • ${m.notes || ''}`);
+            doc.fontSize(10).text(`${new Date(m.date).toLocaleString()} • ${m.mood} • ${m.notes || ''}`);
           });
 
           doc.addPage();
