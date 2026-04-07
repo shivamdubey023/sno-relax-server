@@ -3,6 +3,7 @@ const router = express.Router();
 const ChatHistory = require("../models/ChatHistory");
 const TrainingEntry = require('../models/TrainingEntry');
 const User = require("../models/User");
+const { spawn } = require('child_process');
 
 const fs = require('fs');
 const path = require('path');
@@ -33,8 +34,11 @@ function triggerTrainingUpdate(trainingData) {
     const trainScript = path.join(__dirname, '..', 'models', 'train_bot.py');
     if (!fs.existsSync(trainScript)) return; // train_bot.py not available
     
+    // Use platform-specific Python command
+    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+    
     // Use spawn (not spawnSync) to run truly in background
-    const trainProcess = spawn('python3', [trainScript], {
+    const trainProcess = spawn(pythonCmd, [trainScript], {
       detached: true,
       stdio: 'ignore'  // don't capture output
     });

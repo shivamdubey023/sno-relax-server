@@ -6,6 +6,11 @@ const User = require("../models/User");
 
 module.exports = {
   // ==================== GROUPS ====================
+
+  // Alias for joinGroup - used by admin routes
+  addMember: async (req, res) => {
+    return module.exports.joinGroup(req, res);
+  },
   
   getGroups: async (req, res) => {
     try {
@@ -167,8 +172,8 @@ module.exports = {
         }
       }
 
-      // Check if already a member
-      if (group.members.some(m => m.userId === userId)) {
+      // Check if already a member (with null safety)
+      if ((group.members || []).some(m => m && m.userId === userId)) {
         return res.status(400).json({ error: "Already a member of this group" });
       }
 

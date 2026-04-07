@@ -20,7 +20,7 @@ router.get("/", async (req, res) => {
     res.json(formatted);
   } catch (err) {
     console.error("Chat history error:", err);
-    res.status(500).json([]);
+    res.status(500).json({ error: "Failed to fetch chat history" });
   }
 });
 

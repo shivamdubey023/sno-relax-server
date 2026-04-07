@@ -8,13 +8,22 @@ router.post("/:userId", async (req, res) => {
     const { userId } = req.params;
     const { mood } = req.body;
 
-    if (!userId || mood === undefined) {
-      return res.status(400).json({ error: "userId and mood are required" });
+    if (!userId) {
+      return res.status(400).json({ error: "userId is required" });
+    }
+
+    if (mood === undefined || mood === null || typeof mood !== 'number') {
+      return res.status(400).json({ error: "mood must be a number" });
+    }
+
+    const moodValue = Number(mood);
+    if (isNaN(moodValue) || moodValue < 0 || moodValue > 5) {
+      return res.status(400).json({ error: "mood must be a number between 0 and 5" });
     }
 
     const entry = await Mood.create({
       userId,
-      mood,
+      mood: moodValue,
       date: new Date(),
     });
 
