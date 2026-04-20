@@ -3,6 +3,8 @@ module.exports = function (io) {
   const TrainingEntry = require('../models/TrainingEntry');
   const User = require('../models/User');
 
+  console.log('🤖 ChatBot Socket initialized');
+
   const { CohereClient } = (() => {
     try {
       return require('cohere-ai');
@@ -117,6 +119,8 @@ module.exports = function (io) {
   }
 
   io.on('connection', (socket) => {
+    console.log(`🤖 ChatBot client connected: ${socket.id}`);
+    
     socket.on('chatbotMessage', async (payload) => {
       try {
         const { userId, message, lang = 'auto' } = payload || {};
@@ -181,6 +185,10 @@ module.exports = function (io) {
         console.error('chatbotMessage error:', err.message);
         socket.emit('chatbotError', { error: 'internal error' });
       }
+    });
+
+    socket.on('disconnect', (reason) => {
+      console.log(`🤖 ChatBot client disconnected: ${socket.id} (${reason})`);
     });
   });
 };
