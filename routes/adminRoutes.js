@@ -15,6 +15,9 @@ const PrivateMessage = require("../models/PrivateMessage");
 const Report = require("../models/Report");
 const Setting = require("../models/Setting");
 const UserProfileChange = require("../models/UserProfileChange");
+const HospitalReport = require("../models/HospitalReport");
+const Mood = require("../models/Mood");
+const TrainingEntry = require("../models/TrainingEntry");
 const adminAuth = require('../middleware/adminAuth');
 
 // Admin login route
@@ -598,6 +601,335 @@ router.get('/relationships/summary', async (req, res) => {
   } catch (err) {
     console.error('Error computing relationships summary:', err);
     return res.status(500).json({ error: err.message });
+  }
+});
+
+// --------------- ANALYTICS DASHBOARD ---------------
+router.get('/analytics/dashboard', async (req, res) => {
+  try {
+    const now = new Date();
+    const last7Days = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const last30Days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    const [
+      totalUsers,
+      newUsersWeek,
+      newUsersMonth,
+      totalChats,
+      chatsLast7Days,
+      totalContent,
+      contentLast7Days,
+      totalGroups,
+      totalMembers,
+      totalMessages,
+      totalReports,
+      criticalReports
+    ] = await Promise.all([
+      User.countDocuments(),
+      User.countDocuments({ createdAt: { $gte: last7Days } }),
+      User.countDocuments({ createdAt: { $gte: last30Days } }),
+      ChatHistory.countDocuments(),
+      ChatHistory.countDocuments({ timestamp: { $gte: last7Days } }),
+      Content.countDocuments(),
+      Content.countDocuments({ createdAt: { $gte: last7Days } }),
+      CommunityGroup.countDocuments(),
+      CommunityGroup.aggregate([{ $project: { count: { $size: { $ifNull: ["$members", []] } } } }, { $group: { _id: null, total: { $sum: "$count" } } }]),
+      GroupMessage.countDocuments(),
+      HospitalReport.countDocuments(),
+      HospitalReport.countDocuments({ 'summary.overall': 'critical' })
+    ]);
+
+    res.json({
+      ok: true,
+      overview: {
+        totalUsers,
+        newUsersWeek,
+        newUsersMonth,
+        growthWeek: totalUsers > 0 ? Math.round((newUsersWeek / totalUsers) * 100) : 0,
+        totalChats,
+        chatsLast7Days,
+        totalContent,
+        contentLast7Days,
+        totalGroups,
+        totalMembers: totalMembers[0]?.total || 0,
+        totalMessages,
+        totalReports,
+        criticalReports
+      }
+    });
+  } catch (err) {
+    console.error('Analytics dashboard error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/analytics/users-trend', async (req, res) => {
+  try {
+    const { days = 30 } = req.query;
+    const daysNum = parseInt(days) || 30;
+    const now = new Date();
+    const startDate = new Date(now.getTime() - daysNum * 24 * 60 * 60 * 1000);
+
+    const dailyCounts = await User.aggregate([
+      { $match: { createdAt: { $gte: startDate } } },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    const allDates = [];
+    for (let i = 0; i < daysNum; i++) {
+      const d = new Date(startDate.getTime() + i * 24 * 60 * 60 * 1000);
+      allDates.push(d.toISOString().split('T')[0]);
+    }
+
+    const dataMap = new Map(dailyCounts.map(d => [d._id, d.count]));
+    const result = allDates.map(date => ({
+      date,
+      label: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      users: dataMap.get(date) || 0
+    }));
+
+    res.json({ ok: true, data: result });
+  } catch (err) {
+    console.error('Users trend error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/analytics/activity-trend', async (req, res) => {
+  try {
+    const days = 7;
+    const now = new Date();
+    const result = [];
+
+    for (let i = days - 1; i >= 0; i--) {
+      const date = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+      const start = new Date(date.setHours(0, 0, 0, 0));
+      const end = new Date(date.setHours(23, 59, 59, 999));
+
+      const [chats, messages, moodEntries] = await Promise.all([
+        ChatHistory.countDocuments({ timestamp: { $gte: start, $lte: end } }),
+        GroupMessage.countDocuments({ createdAt: { $gte: start, $lte: end } }),
+        Mood.countDocuments({ date: { $gte: start, $lte: end } })
+      ]);
+
+      result.push({
+        day: date.toLocaleDateString('en-US', { weekday: 'short' }),
+        chats,
+        messages,
+        moodEntries
+      });
+    }
+
+    res.json({ ok: true, data: result });
+  } catch (err) {
+    console.error('Activity trend error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/analytics/content-stats', async (req, res) => {
+  try {
+    const typesCount = await Content.aggregate([
+      { $group: { _id: '$type', count: { $sum: 1 } } }
+    ]);
+
+    const recentContent = await Content.find()
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .select('title type createdAt createdBy')
+      .lean();
+
+    res.json({
+      ok: true,
+      distribution: typesCount.map(t => ({ name: t._id || 'unknown', value: t.count })),
+      recent: recentContent
+    });
+  } catch (err) {
+    console.error('Content stats error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/analytics/community-stats', async (req, res) => {
+  try {
+    const groups = await CommunityGroup.find()
+      .select('name members isActive createdAt')
+      .lean();
+
+    const groupsWithStats = await Promise.all(groups.map(async (g) => {
+      const messageCount = await GroupMessage.countDocuments({ groupId: g._id });
+      return {
+        ...g,
+        memberCount: g.members?.length || 0,
+        messageCount,
+        isActive: g.isActive
+      };
+    }));
+
+    const totalMembers = groupsWithStats.reduce((sum, g) => sum + g.memberCount, 0);
+    const totalMessages = groupsWithStats.reduce((sum, g) => sum + g.messageCount, 0);
+
+    res.json({
+      ok: true,
+      totalGroups: groups.length,
+      totalMembers,
+      totalMessages,
+      groups: groupsWithStats.sort((a, b) => b.memberCount - a.memberCount)
+    });
+  } catch (err) {
+    console.error('Community stats error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/analytics/mood-stats', async (req, res) => {
+  try {
+    const now = new Date();
+    const last7Days = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const last30Days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    const [weekEntries, monthEntries, dailyAverage, avgByDay] = await Promise.all([
+      Mood.countDocuments({ date: { $gte: last7Days } }),
+      Mood.countDocuments({ date: { $gte: last30Days } }),
+      Mood.aggregate([
+        { $match: { date: { $gte: last30Days } } },
+        { $group: { _id: null, avgMood: { $avg: '$mood' } } }
+      ]),
+      Mood.aggregate([
+        { $match: { date: { $gte: last7Days } } },
+        {
+          $group: {
+            _id: { $dayOfWeek: '$date' },
+            avgMood: { $avg: '$mood' },
+            count: { $sum: 1 }
+          }
+        },
+        { $sort: { _id: 1 } }
+      ])
+    ]);
+
+    const moodDistribution = await Mood.aggregate([
+      { $match: { date: { $gte: last30Days } } },
+      { $group: { _id: '$mood', count: { $sum: 1 } } },
+      { $sort: { _id: 1 } }
+    ]);
+
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const avgByDayFormatted = avgByDay.map(d => ({
+      day: dayNames[d._id - 1] || 'Unknown',
+      avgMood: d.avgMood ? Math.round(d.avgMood * 10) / 10 : 0,
+      count: d.count
+    }));
+
+    res.json({
+      ok: true,
+      weekEntries,
+      monthEntries,
+      dailyAverage: avgByDayFormatted,
+      avgMoodOverall: avgByDay.length > 0 ? avgByDay.reduce((sum, d) => sum + (d.avgMood || 0), 0) / avgByDay.length : 0,
+      distribution: moodDistribution.map(d => ({
+        mood: d._id,
+        label: ['Very Low', 'Low', 'Neutral', 'Good', 'Great', 'Excellent'][d._id] || 'Unknown',
+        count: d.count
+      }))
+    });
+  } catch (err) {
+    console.error('Mood stats error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/analytics/report-stats', async (req, res) => {
+  try {
+    const [total, analyzed, pending, error, critical, abnormal, normal] = await Promise.all([
+      HospitalReport.countDocuments(),
+      HospitalReport.countDocuments({ reportStatus: 'analyzed' }),
+      HospitalReport.countDocuments({ reportStatus: 'pending' }),
+      HospitalReport.countDocuments({ reportStatus: 'error' }),
+      HospitalReport.countDocuments({ 'summary.overall': 'critical' }),
+      HospitalReport.countDocuments({ 'summary.overall': 'abnormal' }),
+      HospitalReport.countDocuments({ 'summary.overall': 'normal' })
+    ]);
+
+    const recent = await HospitalReport.find()
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .select('userId summary reportStatus createdAt')
+      .lean();
+
+    res.json({
+      ok: true,
+      total,
+      byStatus: { analyzed, pending, error },
+      bySummary: { critical, abnormal, normal },
+      recent
+    });
+  } catch (err) {
+    console.error('Report stats error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/analytics/top-users', async (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+    const limitNum = parseInt(limit) || 10;
+
+    const topChatters = await ChatHistory.aggregate([
+      { $group: { _id: '$userId', chatCount: { $sum: 1 } } },
+      { $sort: { chatCount: -1 } },
+      { $limit: limitNum }
+    ]);
+
+    const topMessengers = await GroupMessage.aggregate([
+      { $group: { _id: '$senderId', messageCount: { $sum: 1 } } },
+      { $sort: { messageCount: -1 } },
+      { $limit: limitNum }
+    ]);
+
+    const topMoods = await Mood.aggregate([
+      { $group: { _id: '$userId', moodCount: { $sum: 1 }, avgMood: { $avg: '$mood' } } },
+      { $sort: { moodCount: -1 } },
+      { $limit: limitNum }
+    ]);
+
+    const userIds = [...new Set([
+      ...topChatters.map(u => u._id),
+      ...topMessengers.map(u => u._id),
+      ...topMoods.map(u => u._id)
+    ])];
+
+    const users = await User.find({ userId: { $in: userIds } })
+      .select('userId firstName lastName email avatar')
+      .lean();
+
+    const userMap = new Map(users.map(u => [u.userId, u]));
+
+    const enrich = (arr, key, valueKey) => arr.map(item => {
+      const user = userMap.get(item._id) || {};
+      return {
+        userId: item._id,
+        name: user.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : user.communityNickname || item._id,
+        email: user.email,
+        [valueKey]: item[key]
+      };
+    });
+
+    res.json({
+      ok: true,
+      topChatters: enrich(topChatters, 'chatCount', 'chats'),
+      topMessengers: enrich(topMessengers, 'messageCount', 'messages'),
+      topMoods: enrich(topMoods, 'moodCount', 'entries')
+    });
+  } catch (err) {
+    console.error('Top users error:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 

@@ -9,9 +9,10 @@ const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 const chalk = require('chalk');
+const mongoose = require('mongoose');
 
 // Database connection
-const connectDB = require('./db');
+const { connectDB } = require('./db');
 connectDB();
 
 // ==================== Logging Helpers ====================

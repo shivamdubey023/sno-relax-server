@@ -1,5 +1,8 @@
 // sno-relax-server/db.js
 const mongoose = require('mongoose');
+
+require('./models');
+
 let chalk;
 try {
   chalk = require('chalk');
@@ -10,22 +13,15 @@ try {
 let mongoMemoryServer = null;
 let MongoMemoryServer;
 try {
-  // require at runtime so production (no dev dep) isn't affected
   MongoMemoryServer = require('mongodb-memory-server').MongoMemoryServer;
 } catch (e) {
   MongoMemoryServer = null;
 }
 
-// Only connect when a MONGODB_URI (or MONGO_URI) environment variable is provided.
-// This prevents the server from attempting to connect to localhost in hosted environments.
-// Set `MONGODB_URI` in your deployment or local env when you want DB connectivity.
-const MONGO_URI = process.env.MONGODB_URI || process.env.MONGO_URI || null;
+const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI || null;
 
-// Keep mongoose buffering enabled by default to avoid throwing when routes call models
-// before a connection is established. Route handlers should perform fallbacks where needed.
 mongoose.set('bufferCommands', true);
 
-// ==================== Log Helpers ====================
 const log = {
   info: (msg) => console.log(chalk.blue('ℹ️ [DB]'), msg),
   success: (msg) => console.log(chalk.green('✅ [DB]'), msg),
@@ -34,13 +30,50 @@ const log = {
   connection: (type) => console.log(chalk.cyan('🔗 [DB]'), 'MongoDB connection event:', type),
 };
 
-// Connection event listeners
 mongoose.connection.on('connecting', () => log.info('Connecting to MongoDB...'));
 mongoose.connection.on('connected', () => log.success(`Connected: ${mongoose.connection.name}`));
 mongoose.connection.on('disconnected', () => log.warn('Disconnected from MongoDB'));
 mongoose.connection.on('error', (err) => log.error(`Connection error: ${err.message}`));
 mongoose.connection.on('reconnect', (attempt) => log.info(`Reconnected after ${attempt} attempts`));
 mongoose.connection.on('close', () => log.info('Connection closed'));
+
+const INDEXES = [
+  { name: 'User_email', model: 'User', index: { email: 1 }, options: { unique: true } },
+  { name: 'User_phone', model: 'User', index: { phone: 1 }, options: { unique: true } },
+  { name: 'User_userId', model: 'User', index: { userId: 1 }, options: { unique: true } },
+  { name: 'Mood_user_date', model: 'Mood', index: { userId: 1, date: -1 }, options: {} },
+  { name: 'CommunityGroup_name', model: 'CommunityGroup', index: { name: 'text' }, options: {} },
+  { name: 'GroupMessage_group_created', model: 'GroupMessage', index: { groupId: 1, createdAt: -1 }, options: {} },
+  { name: 'ChatHistory_user_timestamp', model: 'ChatHistory', index: { userId: 1, timestamp: -1 }, options: {} },
+  { name: 'PrivateMessage_sender_receiver', model: 'PrivateMessage', index: { senderId: 1, receiverId: 1 }, options: {} },
+  { name: 'HospitalReport_user_created', model: 'HospitalReport', index: { userId: 1, createdAt: -1 }, options: {} },
+  { name: 'HealthPlan_user_created', model: 'HealthPlan', index: { userId: 1, createdAt: -1 }, options: {} },
+  { name: 'UserProfileChange_user_changed', model: 'UserProfileChange', index: { userId: 1, changedAt: -1 }, options: {} },
+  { name: 'TrainingEntry_user_processed', model: 'TrainingEntry', index: { userId: 1, processed: 1 }, options: {} },
+];
+
+async function createIndexes() {
+  log.info('Creating database indexes...');
+  let created = 0;
+  let skipped = 0;
+  
+  for (const idx of INDEXES) {
+    try {
+      const Model = mongoose.model(idx.model);
+      await Model.createIndexes();
+      created++;
+    } catch (e) {
+      if (e.message.includes('already exists')) {
+        skipped++;
+      } else {
+        log.warn(`Index ${idx.name}: ${e.message}`);
+      }
+    }
+  }
+  
+  log.success(`Indexes: ${created} created, ${skipped} existing`);
+  return { created, skipped };
+}
 
 const connectDB = async () => {
   log.info('Initializing database connection...');
@@ -54,21 +87,21 @@ const connectDB = async () => {
         await mongoose.connect(memUri, { serverSelectionTimeoutMS: 5000 });
         log.success('Connected to in-memory MongoDB for development');
         
-        // Log server info
         const state = mongoose.connection.readyState;
         log.connection(state === 1 ? 'connected' : 'not connected');
-        return;
+        
+        await createIndexes();
+        return { connected: true, type: 'memory' };
       } catch (memErr) {
         log.warn(`Failed to start in-memory MongoDB: ${memErr.message}`);
-        return;
+        return { connected: false, type: 'none' };
       }
     }
 
     log.warn('No MONGODB_URI set — skipping MongoDB connection. Using in-memory stores only.');
-    return;
+    return { connected: false, type: 'none' };
   }
 
-  // Diagnostic: check if the URI appears local or cloud (don't print the full URI)
   try {
     const isLocal = /localhost|127\.0\.0\.1/.test(MONGO_URI);
     const isSRV = /mongodb\+srv:/.test(MONGO_URI);
@@ -78,15 +111,16 @@ const connectDB = async () => {
   }
 
   try {
-    // Use a short server selection timeout so the app doesn't hang for long when Mongo is unreachable
     await mongoose.connect(MONGO_URI, {
-      serverSelectionTimeoutMS: 5000,
+      serverSelectionTimeoutMS: 8000,
+      connectTimeoutMS: 10000,
     });
 
     log.success('MongoDB connected successfully');
+    await createIndexes();
+    return { connected: true, type: 'atlas' };
   } catch (err) {
     log.warn(`MongoDB connection error: ${err.message}`);
-    // If local development and mongodb-memory-server is available, try falling back
     if (process.env.NODE_ENV === 'development' && MongoMemoryServer) {
       log.info('Attempting to start mongodb-memory-server fallback (development only)');
       try {
@@ -94,14 +128,16 @@ const connectDB = async () => {
         const memUri = mongoMemoryServer.getUri();
         await mongoose.connect(memUri, { serverSelectionTimeoutMS: 5000 });
         log.success('Connected to in-memory MongoDB for development (fallback)');
-        return;
+        await createIndexes();
+        return { connected: true, type: 'memory' };
       } catch (memErr) {
         log.warn(`In-memory MongoDB fallback failed: ${memErr.message}`);
       }
     }
 
     log.warn('Server will attempt to continue without MongoDB');
+    return { connected: false, type: 'none' };
   }
 };
 
-module.exports = connectDB;
+module.exports = { connectDB, createIndexes };
